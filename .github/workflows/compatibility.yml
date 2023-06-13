@@ -93,15 +93,6 @@ jobs:
           container_name="$(basename "${image}" | sed -E 's/[:.]/-/g')"
           ${DBX_CONTAINER_MANAGER} pull "${image}"
           ./distrobox create --yes -i "${image}" --name "${container_name}"
-          #case "${container_name}" in
-          #  *init*)
-          #    echo "SYSTEMD DETECTED: creating container with --init..."
-          #    ./distrobox create --yes -i "${image}" --name "${container_name}" --init
-          #    ;;
-          #  *)
-          #    ./distrobox create --yes -i "${image}" --name "${container_name}"
-          #    ;;
-          # esac
 
       # Ensure distrobox enter and init works:
       - name: Distrobox enter - init
@@ -110,19 +101,6 @@ jobs:
           image=${{ matrix.distribution }}
           container_name="$(basename "${image}" | sed -E 's/[:.]/-/g')"
           ./distrobox enter --name "${container_name}" -- whoami
-          # Temporary disable systemd init on github runners, it seems to be incompatible
-          # with runner services:
-          #   Failed to create /system.slice/runner-provisioner.service/init.scope control group: Permission denied
-          # works fine otherwise.
-          # case "${container_name}" in
-          #   *init*)
-          #     echo "SYSTEMD DETECTED: performing systemctl check..."
-          #     ./distrobox enter --name "${container_name}" -- systemctl status --no-pager
-          #     ;;
-          #   *)
-          #     ./distrobox enter --name "${container_name}" -- whoami
-          #     ;;
-          # esac
 
       # Ensure distrobox enter and init works:
       - name: Distrobox enter - user
@@ -181,6 +159,13 @@ jobs:
           if [ "$command_output" != "$expected_output" ]; then
             exit 1
           fi
+
+      # Ensure distrobox upgrade works:
+      - name: Distrobox upgrade
+        run: |
+          image=${{ matrix.distribution }}
+          container_name="$(basename "${image}" | sed -E 's/[:.]/-/g')"
+          ./distrobox upgrade "${container_name}" --verbose
 
       # Ensure distrobox list works:
       - name: Distrobox list
