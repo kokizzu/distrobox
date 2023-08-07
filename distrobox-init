@@ -1485,6 +1485,7 @@ if  ! grep -q "^# distrobox_profile_passwd" /etc/profile.d/distrobox_profile.sh;
 	cat << EOF >> "/etc/profile.d/distrobox_profile.sh"
 # distrobox_profile_passwd
 if [ -e /tmp/.\$USER.passwd.initialize ]; then
+	echo "⚠️  First time user password setup ⚠️ "
 	trap "echo; exit" INT
 	passwd && rm -f /tmp/.\$USER.passwd.initialize
 	trap - INT
@@ -1574,7 +1575,8 @@ fi
 # In case of AD or LDAP usernames, it is possible we will have a backslach in the name.
 # In that case grep would fail, so we replace the backslash with a point to make the regex work.
 # shellcheck disable=SC1003
-if ! grep "^$(printf '%s' "${container_user_name}" | tr '\\' '.'):" /etc/passwd; then
+if ! grep -q "^$(printf '%s' "${container_user_name}" | tr '\\' '.'):" /etc/passwd &&
+	! grep -q "^.*:.*:${container_user_uid}:" /etc/passwd; then
 	if ! useradd \
 		--home-dir "${container_user_home}" \
 		--no-create-home \
@@ -1618,14 +1620,33 @@ elif [ ! -e /etc/passwd.done ]; then
 	fi
 fi
 
-temporary_password="$(cat /proc/sys/kernel/random/uuid)"
+# Ensure we have our home correctly set, in case of cloned containers or whatnot
+if [ "$(getent passwd "${container_user_name}" | cut -d: -f6)" != "${container_user_home}" ]; then
+	if ! usermod -d "${container_user_home}" "${container_user_name}"; then
+		sed -i "s|^${container_user_name}.*|${container_user_name}:x:${container_user_uid}:${container_user_gid}::${container_user_home}:${SHELL:-"/bin/bash"}|g" /etc/passwd
+	fi
+fi
+
+# If we're rootless, delete password for root and user
 if  [ ! -e /etc/passwd.done ]; then
-	# We generate a random password to initialize the entry for the user and root.
-	printf "%s\n%s\n" "${temporary_password}" "${temporary_password}" | passwd root
+	temporary_password="$(cat /proc/sys/kernel/random/uuid)"
+	# We generate a random password to initialize the entry for the user.
 	printf "%s:%s" "${container_user_name}" "${temporary_password}" | chpasswd -e
-	# Delete password for root and user
-	printf "%s:" "root" | chpasswd -e
 	printf "%s:" "${container_user_name}" | chpasswd -e
+
+	if [ "${rootful}" -eq 0 ]; then
+		# We're rootless so we don't care about account password, so we remove it
+		printf "%s\n%s\n" "${temporary_password}" "${temporary_password}" | passwd root
+		printf "%s:" "root" | chpasswd -e
+	else
+		# We're rootful, so we don't want passwordless accounts, so we lock them
+		# down by default.
+
+		# lock out root user
+		if ! usermod -L root; then
+			sed -i 's|^root.*|root:!:1::::::|g' /etc/shadow
+		fi
+	fi
 fi
 
 # If we are in a rootful container, let's setup a first-shell password setup
@@ -1638,11 +1659,6 @@ if [ "${rootful}" -eq 1 ] &&
 		[ "$(grep "${container_user_name}" /etc/shadow | cut -d':' -f2)" = '!!' ] ||
 			[ "$(grep "${container_user_name}" /etc/shadow | cut -d':' -f2)" = "" ]
 	}; then
-
-	# lock out root user
-	if ! usermod -L root; then
-		sed -i 's|^root.*|root:!:1::::::|g' /etc/shadow
-	fi
 
 	# force setup of user's password on first shell
 	touch /tmp/."${container_user_name}".passwd.initialize
